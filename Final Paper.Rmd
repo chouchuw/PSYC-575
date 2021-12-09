@@ -1,0 +1,303 @@
+---
+title: "Final Paper"
+author: "Chou-Chun Wu"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load packages
+
+```{r load-pkg, message=FALSE}
+# Add additional packages you need
+#library(psych)
+library(here)  # makes reading data more consistent
+library(tidyverse)  # for data manipulation and plotting
+library(haven)  # for importing SPSS/SAS/Stata data
+library(lme4)  # for multilevel analysis
+library(lattice)  # for dotplot (working with lme4)
+library(sjPlot)  # for plotting effects
+library(MuMIn)  # for computing r-squared
+library(r2mlm)  # for computing r-squared
+library(broom.mixed)  # for summarizing results
+library(modelsummary)  # for making tables
+library(dplyr)
+library(skimr)
+library(readxl)
+library(mediation)
+library(lmerTest)
+
+```
+
+## Import Data
+Read data and define two variables of interest
+treated: patient in the treatment group (intervention group) and in the post period
+anysymptom: has any symptom using the Geriatric Depression Scale - Short Form (GDS-SF)
+Empowerment_Scale: Diabetes Empowerment Scale – Short Form (DES-SF)
+Activation_Measure: Patient Activation Measure (PAM-13)  
+```{r data-import, message=FALSE}
+mydata <- read_excel("MatchedData.xlsx")
+mydata$treated = mydata$treatment * mydata$post
+mydata$anysymptom = ifelse(mydata$Depression_Scale > 0, 1, 0)
+mydata$Empowerment_Scale = mydata$s9_1 +mydata$s9_2 +mydata$s9_3 +mydata$s9_4 +mydata$s9_5 +mydata$s9_6 +mydata$s9_7 +mydata$s9_8 
+mydata$Activation_Measure = mydata$s10_1 +mydata$s10_2 +mydata$s10_3 +mydata$s10_4 +mydata$s10_5 +mydata$s10_6 +mydata$s10_7 +mydata$s10_8 +mydata$s10_9 +mydata$s10_10 +mydata$s10_11 +mydata$s10_12 +mydata$s10_13
+```
+
+## Intraclass Correlations (ICC)
+1. Proportion of variance due to the higher (subclass) level
+2. Average correlation between observations (patient) in the same cluster (subclass)
+s8q1: How many of the last SEVEN DAYS have you followed a healthful eating plan?
+s8q6: On how many of the last SEVEN DAYS did you participate in a specific exercise session (such as swimming, walking, biking) other than what you do around the house or as part of your work?  
+s8q7: On how many of the last SEVEN DAYS did you test your blood sugar?
+subclass: Matched pair label using MatchIt package with propensity score and nearest one to one matching (most similar patient in intervention group to control group)
+```{r ICC_s8q1}
+ran_int <- lmer(s8q1 ~ 1 + (1 | subclass), data = mydata)
+summary(ran_int)
+variance_components <- as.data.frame(VarCorr(ran_int))
+between_var <- variance_components$vcov[1]
+within_var <- variance_components$vcov[2]
+(icc <- between_var / (between_var + within_var))
+```
+```{r ICC_s8q6}
+ran_int <- lmer(s8q6 ~ 1 + (1 | subclass), data = mydata)
+summary(ran_int)
+variance_components <- as.data.frame(VarCorr(ran_int))
+between_var <- variance_components$vcov[1]
+within_var <- variance_components$vcov[2]
+(icc <- between_var / (between_var + within_var))
+```
+```{r ICC_s8q7}
+ran_int <- lmer(s8q7 ~ 1 + (1 | subclass), data = mydata)
+summary(ran_int)
+variance_components <- as.data.frame(VarCorr(ran_int))
+between_var <- variance_components$vcov[1]
+within_var <- variance_components$vcov[2]
+(icc <- between_var / (between_var + within_var))
+```
+## Test Random Slope
+Since we used the matched data (with propensity score), we started with a simple model and tested random slope.
+Model equations:
+Lv-1:
+$$\text{s8q7}_{ij} = \beta_{0j} + e_{ij}$$
+Lv-2:
+$$\beta_{0j} = \gamma_{00} + \gamma_{01}\text{treated}_j + u_{0j}$$
+
+```{r m0_s8q1}
+# First, no random slopes
+m0 <- lmer(s8q1 ~ treated + (1| subclass), data = mydata)
+summary(m0)
+# Then test random slopes 
+m11 <- lmer(s8q1 ~ treated + (treated| subclass), data = mydata)
+summary(m11)
+ranova(m11) # 
+```
+It is statistically significant at 0.05 alpha level after we divided the p-value by 2.
+
+```{r m0_s8q6}
+# First, no random slopes
+m0 <- lmer(s8q6 ~ treated + (1| subclass), data = mydata)
+summary(m0)
+# Then test random slopes 
+m16 <- lmer(s8q6 ~ treated + (treated| subclass), data = mydata)
+summary(m16)
+ranova(m16) # 
+```
+It is not statistically significant at 0.05 alpha level (on the boundary (0.0614) after we divided the p-value by 2).
+
+```{r m0_s8q7}
+# First, no random slopes
+m0 <- lmer(s8q7 ~ treated + (1| subclass), data = mydata)
+summary(m0)
+# Then test random slopes 
+m17 <- lmer(s8q7 ~ treated + (treated| subclass), data = mydata)
+summary(m17)
+ranova(m17) # 
+```
+It is not statistically significant at 0.05 alpha level (on the boundary (0.075) after we divided the p-value by 2).
+
+## Association between Receiving Digital Intervention and Weekly Number of healthful eating plan
+```{r plot_s8q1}
+# Plot first 10 items
+sjPlot::plot_model(m11, type = "pred", terms = "treated", 
+                   show.data = TRUE, title = "", 
+                   dot.size = 0.5) + 
+  # Add the group means
+  stat_summary(data = mydata, aes(x = treated, y = s8q1), 
+               fun = mean, geom = "point",
+               col = "red",
+               shape = 17,
+               # use triangles
+               size = 3, 
+               alpha = 0.7)
+```
+This plots shows that receiving digital intervention would increase number of times following healthful eating plans among older adults in Taiwan.
+
+## Association between Receiving Digital Intervention and Weekly Number of exercise events 
+```{r plot_s8q6}
+# Plot first 10 items
+sjPlot::plot_model(m16, type = "pred", terms = "treated", 
+                   show.data = TRUE, title = "", 
+                   dot.size = 0.5) + 
+  # Add the group means
+  stat_summary(data = mydata, aes(x = treated, y = s8q6), 
+               fun = mean, geom = "point",
+               col = "red",
+               shape = 17,
+               # use triangles
+               size = 3, 
+               alpha = 0.7)
+```
+This plots shows that receiving digital intervention would increase number of exercise events among older adults in Taiwan.
+
+## Association between Receiving Digital Intervention and Weekly Number of Blood Sugar Testing
+```{r plot_s8q7}
+# Plot first 10 items
+sjPlot::plot_model(m17, type = "pred", terms = "treated", 
+                   show.data = TRUE, title = "", 
+                   dot.size = 0.5) + 
+  # Add the group means
+  stat_summary(data = mydata, aes(x = treated, y = s8q7), 
+               fun = mean, geom = "point",
+               col = "red",
+               shape = 17,
+               # use triangles
+               size = 3, 
+               alpha = 0.7)
+```
+This plots shows that receiving digital intervention would increase number of blood sugar testing among older adults in Taiwan.
+
+```{r detach}
+detach_package <- function(pkg, character.only = FALSE)
+{
+  if(!character.only)
+  {
+    pkg <- deparse(substitute(pkg))
+  }
+  search_item <- paste("package", pkg, sep = ":")
+  while(search_item %in% search())
+  {
+    detach(search_item, unload = TRUE, character.only = TRUE)
+  }
+}
+detach_package(lmerTest)
+```
+## Is Empowerment A Mediator for Diet?
+```{r mediation_Empowerment_Scale_1}
+fit.totaleffect <- lmer(s8q1 ~ treated+(treated| subclass), data = mydata)
+fit.mediator <- lmer(Empowerment_Scale ~treated+(treated| subclass), data = mydata)
+fit.dv  <- lmer(s8q1 ~ Empowerment_Scale + treated+(treated| subclass), data = mydata)
+msummary(list("(1)" = fit.totaleffect, 
+              "(2)" = fit.mediator,
+              "(3)" = fit.dv))
+
+resultsE1 <- mediate(fit.mediator, fit.dv, treat='treated', mediator='Empowerment_Scale')
+summary(resultsE1)
+
+plot(summary(resultsE1))
+MuMIn::r.squaredGLMM(fit.totaleffect)
+MuMIn::r.squaredGLMM(fit.mediator)
+MuMIn::r.squaredGLMM(fit.dv)
+```
+Since ACME and total effect are statistically significant (ADE is not), it shows that empowerment is a strong mediator.
+
+## Is Empowerment A Mediator for Exercise?
+```{r mediation_Empowerment_Scale_6}
+fit.totaleffect <- lmer(s8q6 ~ treated+(treated| subclass), data = mydata)
+fit.mediator <- lmer(Empowerment_Scale ~treated+(treated| subclass), data = mydata)
+fit.dv  <- lmer(s8q6 ~ Empowerment_Scale + treated+(treated| subclass), data = mydata)
+msummary(list("(1)" = fit.totaleffect, 
+              "(2)" = fit.mediator,
+              "(3)" = fit.dv))
+
+resultsE6 <- mediate(fit.mediator, fit.dv, treat='treated', mediator='Empowerment_Scale')
+summary(resultsE6)
+
+plot(summary(resultsE6))
+MuMIn::r.squaredGLMM(fit.totaleffect)
+MuMIn::r.squaredGLMM(fit.mediator)
+MuMIn::r.squaredGLMM(fit.dv)
+```
+All effects are not statistically significant
+
+## Is Empowerment A Mediator for Blood Sugar Testing?
+```{r mediation_Empowerment_Scale_7}
+fit.totaleffect <- lmer(s8q7 ~ treated+(treated| subclass), data = mydata)
+fit.mediator <- lmer(Empowerment_Scale ~treated+(treated| subclass), data = mydata)
+fit.dv  <- lmer(s8q7 ~ Empowerment_Scale + treated+(treated| subclass), data = mydata)
+msummary(list("(1)" = fit.totaleffect, 
+              "(2)" = fit.mediator,
+              "(3)" = fit.dv))
+
+resultsE7 <- mediate(fit.mediator, fit.dv, treat='treated', mediator='Empowerment_Scale')
+summary(resultsE7)
+
+plot(summary(resultsE7))
+MuMIn::r.squaredGLMM(fit.totaleffect)
+MuMIn::r.squaredGLMM(fit.mediator)
+MuMIn::r.squaredGLMM(fit.dv)
+```
+Since ACME (average causal mediation effects) is not statistically significant, it shows that empowerment may not be a good mediator.
+
+## Is Activation A Mediator for Diet?
+```{r mediation_Activation_Measure_1}
+fit.totaleffect <- lmer(s8q1 ~ treated+(treated| subclass), data = mydata)
+fit.mediator <- lmer(Activation_Measure ~treated+(treated| subclass), data = mydata)
+fit.dv  <- lmer(s8q1 ~ Activation_Measure + treated+(treated| subclass), data = mydata)
+msummary(list("(1)" = fit.totaleffect, 
+              "(2)" = fit.mediator,
+              "(3)" = fit.dv))
+
+resultsA1 <- mediate(fit.mediator, fit.dv, treat='treated', mediator='Activation_Measure')
+summary(resultsA1)
+
+plot(summary(resultsA1))
+MuMIn::r.squaredGLMM(fit.totaleffect)
+MuMIn::r.squaredGLMM(fit.mediator)
+MuMIn::r.squaredGLMM(fit.dv)
+```
+Since ACME and total effect are statistically significant (ADE is not), it shows that activation is a strong mediator.
+
+## Is Activation A Mediator for Exercise?
+```{r mediation_Activation_Measure_6}
+fit.totaleffect <- lmer(s8q6 ~ treated+(treated| subclass), data = mydata)
+fit.mediator <- lmer(Activation_Measure ~treated+(treated| subclass), data = mydata)
+fit.dv  <- lmer(s8q6 ~ Activation_Measure + treated+(treated| subclass), data = mydata)
+msummary(list("(1)" = fit.totaleffect, 
+              "(2)" = fit.mediator,
+              "(3)" = fit.dv))
+
+resultsA6 <- mediate(fit.mediator, fit.dv, treat='treated', mediator='Activation_Measure')
+summary(resultsA6)
+
+plot(summary(resultsA6))
+MuMIn::r.squaredGLMM(fit.totaleffect)
+MuMIn::r.squaredGLMM(fit.mediator)
+MuMIn::r.squaredGLMM(fit.dv)
+```
+While the total effect is not statistically significant, the ACME is indeed statistically significant. It shows that activation mediates the intervention effect.
+
+## Is Activation A Mediator for Blood Sugar Testing?
+```{r mediation_Activation_Measure_7}
+fit.totaleffect <- lmer(s8q7 ~ treated+(treated| subclass), data = mydata)
+fit.mediator <- lmer(Activation_Measure ~treated+(treated| subclass), data = mydata)
+fit.dv  <- lmer(s8q7 ~ Activation_Measure + treated+(treated| subclass), data = mydata)
+msummary(list("(1)" = fit.totaleffect, 
+              "(2)" = fit.mediator,
+              "(3)" = fit.dv))
+
+resultsA7 <- mediate(fit.mediator, fit.dv, treat='treated', mediator='Activation_Measure')
+summary(resultsA7)
+
+plot(summary(resultsA7))
+MuMIn::r.squaredGLMM(fit.totaleffect)
+MuMIn::r.squaredGLMM(fit.mediator)
+MuMIn::r.squaredGLMM(fit.dv)
+```
+Since ACME (average causal mediation effects) is statistically significant, it shows that activation is a possible mediator.
+
